@@ -14,7 +14,7 @@ class DetectionDataModule(AbstractDataModule):
     def __init__(self):
         super().__init__()
         self.data_dir = (
-            "/home/vladimir_kosolapov/.cache/kagglehub/datasets/jangsienicajzkowy/afo-aerial-dataset-of-floating-objects/versions/1"
+            "/home/vladimir_kosolapov/.cache/kagglehub/datasets/jangsienicajzkowy/afo-aerial-dataset-of-floating-objects/versions/1/PART_1/PART_1"
         )
         self.image_size = DATA_IMAGE_SIZE_DETECTION
 
@@ -32,7 +32,7 @@ class YOLODataset(Dataset):
         super().__init__()
         self.data_dir = data_dir
         self.phase = phase
-        with open(os.path.join(self.data_dir, f"{phase}.txt")) as file:
+        with open(os.path.join(self.data_dir, f"{phase if phase != 'val' else 'validation'}.txt")) as file:
             self.annotation_lines = file.readlines()
         self.length = len(self.annotation_lines)
         self.image_size = image_size
