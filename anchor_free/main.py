@@ -51,6 +51,9 @@ def main():
             save_dir="logs",
             project=TRAINER_EXPERIMENT_NAME,
             name=TRAINER_EXPERIMENT_VERSION,
+            #resume="never",
+            #offline=True,
+            #anonymous="allow",
         ),
         fast_dev_run=TRAINER_FAST_DEV_RUN,
     )

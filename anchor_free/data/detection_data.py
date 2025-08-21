@@ -14,7 +14,7 @@ class DetectionDataModule(AbstractDataModule):
     def __init__(self):
         super().__init__()
         self.data_dir = (
-            "/kaggle/working/data/afo-aerial-dataset-of-floating-objects/PART_1/PART_1"
+            "/home/vladimir_kosolapov/.cache/kagglehub/datasets/jangsienicajzkowy/afo-aerial-dataset-of-floating-objects/versions/1"
         )
         self.image_size = DATA_IMAGE_SIZE_DETECTION
 
