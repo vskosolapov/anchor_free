@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 from timm.models.resnet import _create_resnet, Bottleneck
 from timm.models import create_model
@@ -22,9 +23,9 @@ class DetectionModel(AbstractModel):
         model_args = dict(
             block=Bottleneck,
             layers=[2, 2, 2, 2],
-            cardinality=32,
+            #cardinality=32,
             base_width=4,
-            block_args=dict(attn_layer="eca"),
+            #block_args=dict(attn_layer="eca"),
             norm_layer=CBatchNorm2d,
             act_layer=torch.nn.Mish,
             drop_block_rate=0.01,
@@ -44,15 +45,16 @@ class DetectionModel(AbstractModel):
         # )
         self.backbone = TIMMBackbone(self.backbone, multi_output=True)
         channels = self.backbone.get_output_channels()
-        # self.head = CenterNet(
-        #    num_classes=self.num_classes,
-        #    input_channels=channels,
-        #    norm_layer=CBatchNorm2d,
-        #    act_layer=torch.nn.Mish,
-        #    drop_block_rate=0.01,
-        #    drop_path_rate=0.01,
-        # )
-        self.head = FCOS(channels, self.num_classes)
+        in_channels = channels[-1] if isinstance(channels, list) else channels
+        self.head = CenterNet(
+            num_classes=self.num_classes,
+            input_channels=in_channels,
+            norm_layer=CBatchNorm2d,
+            act_layer=torch.nn.Mish,
+            drop_block_rate=0.01,
+            drop_path_rate=0.01,
+        )
+        # self.head = FCOS(channels, self.num_classes)
         self.metrics = {
             "train": {},
             "val": {
@@ -134,6 +136,8 @@ class DetectionModel(AbstractModel):
 
     def forward(self, x):
         x = self.backbone(x)
+        if isinstance(x, (list, tuple)):
+            x = x[-1]
         x = self.head(x)
         return x
 
@@ -155,6 +159,7 @@ class DetectionModel(AbstractModel):
         # )
         targets = self.head.preprocess_targets(y, labels_count)
         loss, separate_losses = self.head.loss(logits, targets)
+        # Keep original labels on CPU to conserve memory; convert per-item to metric device below
         y = y.cpu()
         self.log(
             f"loss/{phase}",
@@ -175,35 +180,51 @@ class DetectionModel(AbstractModel):
             )
         batch_preds = []
         batch_labels = []
+        metric_device = self.device if hasattr(self, "device") else x.device
         for i in range(len(predictions)):
-            if predictions[i] is not None:
-                # Convert BoxList to the expected dict for torchmetrics mAP
-                boxes = predictions[i].box.detach().cpu()
-                scores = predictions[i].fields["scores"].detach().cpu()
-                labels = predictions[i].fields["labels"].detach().cpu() - 1
-                preds = {
-                    "boxes": boxes,
-                    "scores": scores,
-                    "labels": labels.to(torch.int64),
-                }
+            pred_i = predictions[i]
+            if pred_i is not None:
+                if hasattr(pred_i, "box"):
+                    # FCOS BoxList case (labels are 1-based)
+                    boxes = pred_i.box.detach().to(metric_device)
+                    scores = pred_i.fields["scores"].detach().to(metric_device)
+                    labels = (pred_i.fields["labels"].detach() - 1).to(metric_device)
+                    preds = {
+                        "boxes": boxes,
+                        "scores": scores,
+                        "labels": labels.to(torch.int64),
+                    }
+                else:
+                    # CenterNet numpy array case: [x1,y1,x2,y2,score,label] with 0-based labels
+                    arr = pred_i if isinstance(pred_i, np.ndarray) else pred_i.cpu().numpy()
+                    if arr.size == 0:
+                        preds = {
+                            "boxes": torch.tensor([], dtype=torch.float32, device=metric_device),
+                            "scores": torch.tensor([], dtype=torch.float32, device=metric_device),
+                            "labels": torch.tensor([], dtype=torch.int64, device=metric_device),
+                        }
+                    else:
+                        preds = {
+                            "boxes": torch.tensor(arr[:, :4], dtype=torch.float32, device=metric_device),
+                            "scores": torch.tensor(arr[:, 4], dtype=torch.float32, device=metric_device),
+                            "labels": torch.tensor(arr[:, 5], dtype=torch.int64, device=metric_device),
+                        }
             else:
                 preds = {
-                    "boxes": torch.Tensor(),
-                    "scores": torch.Tensor(),
-                    "labels": torch.Tensor(),
+                    "boxes": torch.tensor([], dtype=torch.float32, device=metric_device),
+                    "scores": torch.tensor([], dtype=torch.float32, device=metric_device),
+                    "labels": torch.tensor([], dtype=torch.int64, device=metric_device),
                 }
             batch_preds.append(preds)
             if not y[i] is None:
-                labels = {
-                    "boxes": torch.Tensor(y[i, : labels_count[i], :4]).view(
-                        labels_count[i], 4
-                    ),
-                    "labels": torch.Tensor(y[i, : labels_count[i], 4]).view(
-                        labels_count[i]
-                    ),
-                }
+                boxes_lab = torch.tensor(y[i, : labels_count[i], :4]).view(labels_count[i], 4).to(metric_device)
+                labels_lab = torch.tensor(y[i, : labels_count[i], 4]).view(labels_count[i]).to(metric_device)
+                labels = {"boxes": boxes_lab, "labels": labels_lab}
             else:
-                labels = {"boxes": torch.Tensor(), "labels": torch.Tensor()}
+                labels = {
+                    "boxes": torch.tensor([], dtype=torch.float32, device=metric_device),
+                    "labels": torch.tensor([], dtype=torch.int64, device=metric_device),
+                }
             batch_labels.append(labels)
 
         for metric in self.metrics[phase]:

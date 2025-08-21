@@ -25,14 +25,14 @@ def main():
         max_epochs=TRAINER_MAX_EPOCHS,
         check_val_every_n_epoch=1,
         callbacks=[
-            GradientAccumulationScheduler(scheduling={0: 8, 10: 4, 20: 2, 30: 1}),
-            StochasticWeightAveraging(
-                swa_lrs=0.01,
-                swa_epoch_start=100,
-                annealing_epochs=5,
-                annealing_strategy="cos",
-                device="cuda",
-            ),
+            #GradientAccumulationScheduler(scheduling={0: 8, 10: 4, 20: 2, 30: 1}),
+            #StochasticWeightAveraging(
+            #    swa_lrs=0.01,
+            #    swa_epoch_start=100,
+            #    annealing_epochs=5,
+            #    annealing_strategy="cos",
+            #    device="cuda",
+            #),
             ModelCheckpoint(
                 monitor=TRAINER_MONITOR,
                 mode=TRAINER_MONITOR_MODE,
