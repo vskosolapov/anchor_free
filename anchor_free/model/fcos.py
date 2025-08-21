@@ -153,6 +153,8 @@ class FCOSLoss(nn.Module):
     def get_sample_region(self, gt, strides, n_point_per_level, xs, ys, radius=1):
         n_gt = gt.shape[0]
         n_loc = len(xs)
+        if n_gt == 0:
+            return xs.new_zeros(xs.shape, dtype=torch.uint8)
         gt = gt[None].expand(n_loc, n_gt, 4)
         center_x = (gt[..., 0] + gt[..., 2]) / 2
         center_y = (gt[..., 1] + gt[..., 3]) / 2
@@ -208,7 +210,12 @@ class FCOSLoss(nn.Module):
             bboxes = targets_per_img["box"]
             labels_per_img = targets_per_img["labels"]
             area = targets_per_img["area"]
-            print(locations.size(), bboxes.size())
+
+            # If there are no ground-truth boxes for this image, assign background
+            if bboxes.numel() == 0:
+                labels.append(xs.new_zeros(len(locations), dtype=torch.long))
+                box_targets.append(xs.new_zeros((len(locations), 4), dtype=torch.float32))
+                continue
 
             l = xs[:, None] - bboxes[:, 0][None]
             t = ys[:, None] - bboxes[:, 1][None]
@@ -724,26 +731,25 @@ class FCOS(nn.Module):
 
     def preprocess_targets(self, targets, labels_count):
         result = []
-        index = 0
-        for i in range(targets.size()[0]):
-            result.append(
-                {
-                    "mode": "xyxy",
-                    "box": targets[:4, index : index + labels_count[i]],
-                    "labels": targets[4, index : index + labels_count[i]],
-                    "area": (
-                        (
-                            targets[2, index : index + labels_count[i]]
-                            - targets[0, index : index + labels_count[i]]
-                        )
-                        * (
-                            targets[3, index : index + labels_count[i]]
-                            - targets[1, index : index + labels_count[i]]
-                        )
-                    ),
-                }
-            )
-            index += labels_count[i]
+        batch_size = targets.size(0)
+        for i in range(batch_size):
+            num_boxes = int(labels_count[i])
+            if num_boxes <= 0:
+                boxes = targets.new_zeros((0, 4))
+                labels = targets.new_zeros((0,), dtype=torch.long)
+                area = targets.new_zeros((0,))
+            else:
+                t = targets[i, :num_boxes, :]
+                boxes = t[:, :4].to(torch.float32)
+                # shift labels to [1..n_class], 0 is reserved for background
+                labels = t[:, 4].to(torch.long) + 1
+                area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+            result.append({
+                "mode": "xyxy",
+                "box": boxes,
+                "labels": labels,
+                "area": area,
+            })
         return result
 
     def postprocess_predictions(self, logits):
@@ -758,10 +764,11 @@ class FCOS(nn.Module):
 
     def compute_location(self, features):
         locations = []
-        for i, feat in enumerate(features):
+        # Use only as many levels as we predict on
+        for i, feat in enumerate(features[: len(self.scales)]):
             _, _, height, width = feat.shape
             location_per_level = self.compute_location_per_level(
-                height, width, self.fpn_strides[i - 1], feat.device
+                height, width, self.fpn_strides[i], feat.device
             )
             locations.append(location_per_level)
         return locations

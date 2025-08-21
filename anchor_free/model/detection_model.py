@@ -176,11 +176,15 @@ class DetectionModel(AbstractModel):
         batch_preds = []
         batch_labels = []
         for i in range(len(predictions)):
-            if not predictions[i] is None:
+            if predictions[i] is not None:
+                # Convert BoxList to the expected dict for torchmetrics mAP
+                boxes = predictions[i].box.detach().cpu()
+                scores = predictions[i].fields["scores"].detach().cpu()
+                labels = predictions[i].fields["labels"].detach().cpu() - 1
                 preds = {
-                    "boxes": torch.Tensor(predictions[i][:, :4]),
-                    "scores": torch.Tensor(predictions[i][:, 4]),
-                    "labels": torch.Tensor(predictions[i][:, 5]),
+                    "boxes": boxes,
+                    "scores": scores,
+                    "labels": labels.to(torch.int64),
                 }
             else:
                 preds = {
@@ -217,22 +221,24 @@ class DetectionModel(AbstractModel):
             elif isinstance(self.metrics[phase][metric], Precision) or isinstance(
                 self.metrics[phase][metric], Recall
             ):
-                self.metrics[phase][metric](
-                    torch.sigmoid(logits["cls"])
-                    .permute(0, 2, 3, 1)
-                    .reshape([-1, self.num_classes]),
-                    targets["cls"]
-                    .type(torch.int32)
-                    .permute(0, 2, 3, 1)
-                    .reshape([-1, self.num_classes]),
-                )
-                self.log(
-                    f"{metric}/{phase}",
-                    self.metrics[phase][metric],
-                    metric_attribute=f"{phase}_{metric}",
-                    prog_bar=False,
-                    logger=True,
-                    on_step=False,
-                    on_epoch=True,
-                )
+                # Only compute if logits["cls"] is a single tensor and targets provide class map
+                if isinstance(logits["cls"], torch.Tensor) and isinstance(targets, dict) and "cls" in targets:
+                    self.metrics[phase][metric](
+                        torch.sigmoid(logits["cls"]) 
+                        .permute(0, 2, 3, 1)
+                        .reshape([-1, self.num_classes]),
+                        targets["cls"]
+                        .type(torch.int32)
+                        .permute(0, 2, 3, 1)
+                        .reshape([-1, self.num_classes]),
+                    )
+                    self.log(
+                        f"{metric}/{phase}",
+                        self.metrics[phase][metric],
+                        metric_attribute=f"{phase}_{metric}",
+                        prog_bar=False,
+                        logger=True,
+                        on_step=False,
+                        on_epoch=True,
+                    )
         return loss
