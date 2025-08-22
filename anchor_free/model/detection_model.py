@@ -229,16 +229,8 @@ class DetectionModel(AbstractModel):
 
         for metric in self.metrics[phase]:
             if isinstance(self.metrics[phase][metric], MeanAveragePrecision):
+                # Update stateful metric with current batch; defer logging until epoch end
                 self.metrics[phase][metric](batch_preds, batch_labels)
-                self.log(
-                    f"{metric}/{phase}",
-                    self.metrics[phase][metric]["map"],
-                    metric_attribute=f"{phase}_{metric}",
-                    prog_bar=False,
-                    logger=True,
-                    on_step=False,
-                    on_epoch=True,
-                )
             elif isinstance(self.metrics[phase][metric], Precision) or isinstance(
                 self.metrics[phase][metric], Recall
             ):
@@ -253,13 +245,43 @@ class DetectionModel(AbstractModel):
                         .permute(0, 2, 3, 1)
                         .reshape([-1, self.num_classes]),
                     )
+                    # Defer logging precision/recall until epoch end to avoid issues
+        return loss
+
+    def _log_epoch_metrics(self, phase):
+        if phase not in self.metrics:
+            return
+        for metric_name in self.metrics[phase]:
+            metric_obj = self.metrics[phase][metric_name]
+            if isinstance(metric_obj, MeanAveragePrecision):
+                results = metric_obj.compute()
+                if isinstance(results, dict) and "map" in results:
                     self.log(
-                        f"{metric}/{phase}",
-                        self.metrics[phase][metric],
-                        metric_attribute=f"{phase}_{metric}",
-                        prog_bar=False,
+                        f"{metric_name}/{phase}",
+                        results["map"],
+                        prog_bar=True,
                         logger=True,
                         on_step=False,
                         on_epoch=True,
                     )
-        return loss
+                metric_obj.reset()
+            elif isinstance(metric_obj, Precision) or isinstance(metric_obj, Recall):
+                val = metric_obj.compute()
+                self.log(
+                    f"{metric_name}/{phase}",
+                    val,
+                    prog_bar=False,
+                    logger=True,
+                    on_step=False,
+                    on_epoch=True,
+                )
+                metric_obj.reset()
+
+    def on_validation_epoch_end(self):
+        self._log_epoch_metrics("val")
+
+    def on_test_epoch_end(self):
+        self._log_epoch_metrics("test")
+
+    def on_train_epoch_end(self):
+        self._log_epoch_metrics("train")
