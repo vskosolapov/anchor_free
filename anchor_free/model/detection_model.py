@@ -217,8 +217,16 @@ class DetectionModel(AbstractModel):
                 }
             batch_preds.append(preds)
             if not y[i] is None:
-                boxes_lab = torch.tensor(y[i, : labels_count[i], :4]).view(labels_count[i], 4).to(metric_device)
-                labels_lab = torch.tensor(y[i, : labels_count[i], 4]).view(labels_count[i]).to(metric_device)
+                boxes_lab = (
+                    torch.tensor(y[i, : labels_count[i], :4], dtype=torch.float32)
+                    .view(labels_count[i], 4)
+                    .to(metric_device)
+                )
+                labels_lab = (
+                    torch.tensor(y[i, : labels_count[i], 4], dtype=torch.int64)
+                    .view(labels_count[i])
+                    .to(metric_device)
+                )
                 labels = {"boxes": boxes_lab, "labels": labels_lab}
             else:
                 labels = {

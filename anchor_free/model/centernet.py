@@ -238,9 +238,13 @@ class CenterNet(nn.Module):
                         [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2], dtype=np.float32
                     )
                     center_int = center.astype(np.int32)
-                    target_cls[:, :, :, cls_id] = self.draw_gaussian(
-                        target_cls[:, :, :, cls_id], center_int, radius
+                    # Draw gaussian only for current sample and class channel
+                    heatmap_slice = target_cls[i, :, :, cls_id : cls_id + 1]
+                    heatmap_slice = self.draw_gaussian(
+                        heatmap_slice, center_int, radius
                     )
+                    target_cls[i, :, :, cls_id : cls_id + 1] = heatmap_slice
+                    # Populate offset/size/mask for the current sample at integer center
                     target_offset[i, center_int[0], center_int[1]] = center - center_int
                     target_size[i, center_int[0], center_int[1]] = 1.0 * w, 1.0 * h
                     target_regression_mask[i, center_int[0], center_int[1]] = 1
